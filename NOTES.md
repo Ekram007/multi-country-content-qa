@@ -62,27 +62,24 @@ A complete multi-country content Q&A system that meets all core requirements:
 
 ### Prerequisites
 - **Python 3.11+** required (uses `str | None` union syntax)
-- **Qdrant must be running** on localhost:6333 before ingestion/serving
+- **Qdrant must be running** on localhost:6333 before setup
 - **LLM API key required** - add to `.env` file (Google Gemini configured by default)
 
-### Setup Sequence
+### Single Setup Command (as requested in brief)
 ```bash
-# 1. Install dependencies
-uv sync
-
-# 2. Configure environment  
+# 1. Configure environment
 cp .env.example .env
 # Add your GOOGLE_API_KEY to .env
 
-# 3. Start Qdrant
-docker run -p 6333:6333 qdrant/qdrant
+# 2. Start Qdrant  
+docker run -d -p 6333:6333 qdrant/qdrant
 
-# 4. Ingest corpus (one-time)
-uv run python -m app.ingestion.ingest
-
-# 5. Start server
-uv run uvicorn app.api.main:app --port 8000
+# 3. Run everything (single command as specified in Section 3.2)
+./setup.sh
 ```
+
+### Screenshots Note
+The brief asks for PNG screenshots but this is a CLI environment. I've provided equivalent text evidence in `screenshots/` that demonstrates all required functionality. See `screenshots/README.md` for mapping between requested PNGs and provided text files.
 
 ### Rate Limit Handling
 - **Gemini Free Tier**: 5 requests/minute per model

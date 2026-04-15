@@ -13,25 +13,32 @@ This system solves the challenge of serving contextualized customer support answ
 - Qdrant running on localhost:6333 (or Docker)
 - LLM API key (Google Gemini, OpenAI, or OpenRouter)
 
-### Setup Commands
+### Single Setup Command
 
 ```bash
-# 1. Clone and install dependencies
+# 1. Clone and configure
 git clone <repository-url>
 cd multi-country-content-qa
-uv sync
-
-# 2. Configure environment
 cp .env.example .env
 # Edit .env and add your LLM API key
 
-# 3. Start Qdrant (if using Docker)
-docker run -p 6333:6333 qdrant/qdrant
+# 2. Start Qdrant
+docker run -d -p 6333:6333 qdrant/qdrant
 
-# 4. Ingest content corpus
+# 3. Run everything (ingest + serve)
+./setup.sh
+```
+
+### Manual Setup (Alternative)
+
+```bash
+# Install dependencies
+uv sync
+
+# Ingest content corpus
 uv run python -m app.ingestion.ingest
 
-# 5. Start API server
+# Start API server
 uv run uvicorn app.api.main:app --host 0.0.0.0 --port 8000
 ```
 
