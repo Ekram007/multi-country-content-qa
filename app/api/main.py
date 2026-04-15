@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from app.config.settings import get_settings
 from app.models.schemas import AskRequest, AskResponse, Citation, Trace
 from app.agent.graph import get_compiled_graph
+from app.ingestion.embeddings import get_embedding_model
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +22,21 @@ async def lifespan(app: FastAPI):
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     logger.info("Starting Content Q&A service...")
+    
+    # Pre-load embedding model for faster response times
+    logger.info("Loading embedding model...")
+    embedding_model = get_embedding_model()
+    logger.info(f"Embedding model loaded: {embedding_model.get_embedding_dimension()} dimensions")
+    
+    # Warmup embedding model with a test query
+    logger.info("Warming up embedding model...")
+    test_embedding = embedding_model.encode("test query", normalize_embeddings=True)
+    logger.info(f"Embedding model warmed up successfully")
+    
+    # Compile LangGraph agent
     _graph = get_compiled_graph()
     logger.info("LangGraph agent compiled and ready.")
+    
     yield
     logger.info("Shutting down Content Q&A service.")
 

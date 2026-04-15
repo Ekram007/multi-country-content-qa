@@ -147,6 +147,13 @@ EVAL_SLEEP_SECONDS=20 uv run python evaluate.py
 
 4. **Citation Verification**: Fuzzy matching between generated answer excerpts and source content
 
+## Performance Characteristics
+
+- **Startup Time**: ~10-15 seconds (pre-loads embedding model for fast responses)
+- **First Request**: Fast (~2-3 seconds after startup)
+- **Subsequent Requests**: Very fast (~1-2 seconds)
+- **Throughput**: Limited by LLM provider rate limits, not system architecture
+
 ## Known Limitations
 
 - **LLM Rate Limits**: Free-tier APIs (Gemini 5 req/min) may cause 429 errors during high-volume evaluation
