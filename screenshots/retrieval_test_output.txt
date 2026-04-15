@@ -1,0 +1,28 @@
+=== Multi-tenant Isolation Test ===
+
+Country A - return policy:
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|██████████| 103/103 [00:00<00:00, 6322.92it/s]
+[1mBertModel LOAD REPORT[0m from: sentence-transformers/all-MiniLM-L6-v2
+Key                     | Status     |  | 
+------------------------+------------+--+-
+embeddings.position_ids | UNEXPECTED |  | 
+
+Notes:
+- UNEXPECTED:	can be ignored when loading from different task/architecture; not ok if you expect identical arch.
+  a_faq_returns_en (score: 0.695) - What is your return policy?
+  a_tc_en_v2 (score: 0.272) - Terms of Service
+  a_pp_en_v1 (score: 0.242) - Privacy Policy
+
+Country B - return policy:
+  b_faq_returns_en (score: 0.596) - What is your return policy?
+  b_banner_promo_en (score: 0.279) - New Customer Offer
+  b_pp_en_v2 (score: 0.264) - Privacy Policy
+
+Cross-country leakage check: PASS - No leakage
+
+=== Vector DB Sample ===
+Content ID: a_faq_returns_en
+Country: A | Language: en | Type: FAQ
+Title: What is your return policy?
+Body: Returns are accepted within 48 hours of delivery for defective or incorrect items. Perishable goods ...
+Similarity Score: 0.6952
