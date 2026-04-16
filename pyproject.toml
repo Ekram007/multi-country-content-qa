@@ -2,7 +2,7 @@
 name = "content-qa"
 version = "0.1.0"
 description = "Multi-Country Content Q&A with Citations"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
     "fastapi",
     "uvicorn",

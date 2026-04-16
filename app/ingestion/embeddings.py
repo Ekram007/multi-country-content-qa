@@ -13,8 +13,13 @@ def get_embedding_model() -> SentenceTransformer:
     if _model is None:
         settings = get_settings()
         logger.info(f"Loading embedding model: {settings.embedding_model}")
+        
+        # Load model with reduced verbosity
         _model = SentenceTransformer(settings.embedding_model)
-        logger.info(f"Embedding dimension: {_model.get_embedding_dimension()}")
+        
+        # Log device info (mps=Apple GPU, cuda=NVIDIA, cpu=fallback)
+        device = str(_model.device).upper()
+        logger.info(f"Model loaded on device: {device} ({_model.get_embedding_dimension()} dimensions)")
     return _model
 
 

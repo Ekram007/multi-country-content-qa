@@ -9,7 +9,7 @@ This system solves the challenge of serving contextualized customer support answ
 ## Quick Start
 
 ### Prerequisites
-- Python 3.11+
+- Python 3.10+
 - Qdrant running on localhost:6333 (or Docker)
 - LLM API key (Google Gemini, OpenAI, or OpenRouter)
 
@@ -45,7 +45,7 @@ uv run uvicorn app.api.main:app --host 0.0.0.0 --port 8000
 ### Docker Setup (Alternative)
 
 ```bash
-# Start everything with Docker Compose
+# Start everything with Docker Compose (uv.lock included for reproducible builds)
 docker-compose up -d
 ```
 
@@ -149,7 +149,8 @@ EVAL_SLEEP_SECONDS=20 uv run python evaluate.py
 
 ## Performance Characteristics
 
-- **Startup Time**: ~10-15 seconds (pre-loads embedding model for fast responses)
+- **Startup Time**: ~7-10 seconds (pre-loads embedding model with reduced logging)
+- **Device Detection**: Auto-detects best available (MPS/Apple GPU → CUDA/NVIDIA → CPU)
 - **First Request**: Fast (~2-3 seconds after startup)
 - **Subsequent Requests**: Very fast (~1-2 seconds)
 - **Throughput**: Limited by LLM provider rate limits, not system architecture

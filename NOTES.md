@@ -61,7 +61,7 @@ A complete multi-country content Q&A system that meets all core requirements:
 ## Technical Gotchas for Reviewers
 
 ### Prerequisites
-- **Python 3.11+** required (uses `str | None` union syntax)
+- **Python 3.10+** required (as specified in interview brief)
 - **Qdrant must be running** on localhost:6333 before setup
 - **LLM API key required** - add to `.env` file (Google Gemini configured by default)
 
