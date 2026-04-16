@@ -38,6 +38,12 @@ async def lifespan(app: FastAPI):
     test_embedding = embedding_model.encode("test query", normalize_embeddings=True)
     logger.info(f"Embedding model warmed up successfully")
     
+    # Pre-load LLM for faster first response
+    logger.info("Loading LLM...")
+    from app.agent.llm import get_llm
+    llm = get_llm()
+    logger.info("LLM loaded and ready")
+    
     # Compile LangGraph agent
     _graph = get_compiled_graph()
     logger.info("LangGraph agent compiled and ready.")
