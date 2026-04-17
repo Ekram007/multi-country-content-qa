@@ -21,7 +21,6 @@ class AskRequest(BaseModel):
 class Citation(BaseModel):
     content_id: str
     type: str
-    title: str
     excerpt: str
     match_score: float
 
@@ -30,8 +29,6 @@ class Trace(BaseModel):
     retrieval_count: int
     latency_ms: int
     model: str
-    fallback_used: bool = False
-    fallback_language: str | None = None
 
 
 class AskResponse(BaseModel):

@@ -6,6 +6,8 @@ A natural language Q&A system that retrieves country-scoped content and provides
 
 This system solves the challenge of serving contextualized customer support answers across multiple countries and languages while maintaining strict data isolation. Given a natural language question, country, and language, it retrieves relevant content from that specific country's knowledge base and generates a grounded answer with citations pointing to the exact source content, ensuring no cross-country information leakage.
 
+**Built according to the technical specification in [`AI-Interview.txt`](./AI-Interview.txt).**
+
 ## Quick Start
 
 ### Prerequisites
@@ -216,7 +218,8 @@ EVAL_SLEEP_SECONDS=20 uv run python evaluate.py
 ├── tests/               # Unit tests
 ├── data/               # Corpus data
 ├── screenshots/        # Visual evidence
-├── evaluate.py         # Evaluation harness  
+├── evaluate.py         # Evaluation harness
+├── AI-Interview.txt    # Original technical specification
 └── docker-compose.yml  # Docker orchestration
 ```
 

@@ -26,6 +26,7 @@ async def lifespan(app: FastAPI):
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
     logging.getLogger("transformers").setLevel(logging.WARNING)
+    logging.getLogger("google_genai.models").setLevel(logging.WARNING)  # Suppress AFC messages
     logger.info("Starting Content Q&A service...")
     
     # Pre-load embedding model for faster response times  
@@ -84,7 +85,6 @@ async def ask(request: AskRequest):
         Citation(
             content_id=c["content_id"],
             type=c["type"],
-            title=c["title"],
             excerpt=c["excerpt"],
             match_score=c["match_score"],
         )
@@ -99,8 +99,6 @@ async def ask(request: AskRequest):
             retrieval_count=len(result.get("retrieved_chunks", [])),
             latency_ms=latency_ms,
             model=settings.llm_model,
-            fallback_used=result.get("fallback_used", False),
-            fallback_language=result.get("fallback_language"),
         ),
     )
 

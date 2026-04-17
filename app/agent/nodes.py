@@ -100,15 +100,6 @@ def synthesize_answer(state: AgentState) -> AgentState:
             f"Title: {chunk['title']})\n{chunk['body']}"
         )
     context = "\n\n".join(context_parts)
-
-    translation_instruction = ""
-    if fallback_used and fallback_language:
-        translation_instruction = (
-            f"\nIMPORTANT: The source content is in '{fallback_language}' but the user "
-            f"asked in '{language}'. Translate your answer to '{language}'. "
-            f"Keep the citation references [1], [2], etc. as-is."
-        )
-
     prompt = f"""You are a customer support assistant. Answer the question using ONLY the provided content.
 Do NOT use any outside knowledge. If the content does not contain the answer, say so.
 
@@ -116,7 +107,7 @@ Rules:
 - Ground every claim in the provided content
 - Use inline citations like [1], [2] to reference the source documents
 - Be concise and direct
-- Answer in the language: {language}{translation_instruction}
+- Answer in the SAME LANGUAGE as the question (analyze the question language automatically)
 
 Content:
 {context}
@@ -157,7 +148,6 @@ def extract_citations(state: AgentState) -> AgentState:
             citations.append({
                 "content_id": chunk["content_id"],
                 "type": chunk["type"],
-                "title": chunk["title"],
                 "excerpt": excerpt,
                 "match_score": round(score, 2),
             })
