@@ -1,209 +1,133 @@
-"""Content Q&A Agent - Agent-Service-Toolkit Style."""
+"""
+Content Q&A Agent - Agent-Service-Toolkit Style.
+
+Simple 2-node agent (model + tools) that lets the LLM decide when to call tools.
+"""
 
 import logging
-import time
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any
+from typing import Literal
 
-from langgraph.graph import StateGraph, END
-
-from src.agents.content_qa.schema import AgentState
-from src.agents.content_qa.tools import (
-    validate_input,
-    retrieve_chunks,
-    fallback_retrieve, 
-    synthesize_answer,
-    extract_citations,
-    no_answer_response
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.runnables import (
+    RunnableConfig,
+    RunnableLambda, 
+    RunnableSerializable,
 )
-from src.schema.models import AskRequest, AskResponse, Citation, Trace
-from src.core.settings import settings
+from langgraph.graph import END, MessagesState, StateGraph
+from langgraph.managed import RemainingSteps
+from langgraph.prebuilt import ToolNode
+
+from src.agents.content_qa.tools import content_qa_tools
+from src.core.llm import get_llm
 
 logger = logging.getLogger(__name__)
 
 
-class ContentQAAgent:
-    """Multi-country content Q&A agent with citation support."""
+class ContentQAState(MessagesState, total=False):
+    """State for the Content Q&A Agent - Simple MessagesState."""
     
-    def __init__(self):
-        """Initialize the content Q&A agent."""
-        self.name = "content_qa"
-        self.description = "Multi-country content Q&A with citations"
-        self.version = "1.0.0"
-        self._graph = None
-        
-    def _build_graph(self) -> StateGraph:
-        """Build the LangGraph workflow."""
-        graph = StateGraph(AgentState)
+    remaining_steps: RemainingSteps
 
-        # Add nodes
-        graph.add_node("validate_input", validate_input)
-        graph.add_node("retrieve", retrieve_chunks)
-        graph.add_node("fallback_retrieve", fallback_retrieve)
-        graph.add_node("synthesize", synthesize_answer)
-        graph.add_node("extract_citations", extract_citations)
-        graph.add_node("no_answer", no_answer_response)
 
-        # Set entry point
-        graph.set_entry_point("validate_input")
-
-        # Add conditional edges with routing logic
-        graph.add_conditional_edges(
-            "validate_input",
-            lambda state: state.get("route", "error"),
-            {
-                "retrieve": "retrieve",
-                "error": "no_answer",
-            },
-        )
-
-        graph.add_conditional_edges(
-            "retrieve",
-            lambda state: state.get("route", "no_answer"),
-            {
-                "synthesize": "synthesize",
-                "fallback": "fallback_retrieve",
-            },
-        )
-
-        graph.add_conditional_edges(
-            "fallback_retrieve",
-            lambda state: state.get("route", "no_answer"),
-            {
-                "synthesize": "synthesize",
-                "no_answer": "no_answer",
-            },
-        )
-
-        # Add deterministic edges
-        graph.add_edge("synthesize", "extract_citations")
-        graph.add_edge("extract_citations", END)
-        graph.add_edge("no_answer", END)
-
-        return graph
-        
-    @property
-    def graph(self):
-        """Get or initialize the compiled LangGraph workflow."""
-        if self._graph is None:
-            workflow = self._build_graph()
-            self._graph = workflow.compile()
-        return self._graph
+def load_system_prompt() -> str:
+    """Load system prompt from text file - Agent-Service-Toolkit style."""
+    current_date = datetime.now().strftime("%B %d, %Y")
     
-    def ask(self, request: AskRequest) -> AskResponse:
-        """Process a Q&A request.
+    # Load prompt from file
+    prompt_file = Path(__file__).parent.parent.parent / "prompts" / "content_qa_agent_system_prompt.txt"
+    
+    if not prompt_file.exists():
+        raise FileNotFoundError(f"System prompt file not found: {prompt_file}")
+    
+    prompt = prompt_file.read_text(encoding='utf-8').strip()
+    
+    return prompt
+
+
+def wrap_model(model: BaseChatModel) -> RunnableSerializable[ContentQAState, AIMessage]:
+    """Wrap the model with tools and system instructions."""
+    bound_model = model.bind_tools(content_qa_tools)
+    
+    preprocessor = RunnableLambda(
+        lambda state: [SystemMessage(content=load_system_prompt())] + state["messages"],
+        name="StateModifier",
+    )
+    
+    return preprocessor | bound_model
+
+
+def call_model(state: ContentQAState, config: RunnableConfig) -> ContentQAState:
+    """Call the model with tools and system prompt."""
+    model = get_llm()  # Get configured LLM
+    model_runnable = wrap_model(model)
+    
+    try:
+        # Use synchronous invoke
+        response = model_runnable.invoke(state, config)
         
-        Args:
-            request: The question and filtering parameters
-            
-        Returns:
-            Response with answer, citations, and trace info
-        """
-        start_time = time.time()
+        # Check if we're running out of steps and still have tool calls
+        if state.get("remaining_steps", 10) < 2 and response.tool_calls:
+            return {
+                "messages": [
+                    AIMessage(
+                        id=response.id,
+                        content="I need more steps to process this request fully. Please try asking a more specific question.",
+                    )
+                ]
+            }
         
-        # Prepare agent state
-        initial_state: AgentState = {
-            "question": request.question,
-            "country": request.country.upper(),
-            "language": request.language,
-        }
+        return {"messages": [response]}
         
-        logger.info(
-            f"Processing request: country={request.country}, "
-            f"language={request.language}, question='{request.question[:50]}...'"
-        )
-        
-        try:
-            # Execute agent workflow
-            result = self.graph.invoke(initial_state)
-            
-            # Calculate processing time
-            latency_ms = int((time.time() - start_time) * 1000)
-            
-            # Build citations
-            citations = [
-                Citation(
-                    content_id=c["content_id"],
-                    type=c["type"],
-                    excerpt=c["excerpt"],
-                    match_score=c["match_score"],
+    except Exception as e:
+        logger.error(f"Model call failed: {e}")
+        return {
+            "messages": [
+                AIMessage(
+                    content="I apologize, but I'm experiencing a technical issue. Please try again in a moment.",
                 )
-                for c in result.get("citations", [])
             ]
-            
-            # Build response
-            response = AskResponse(
-                answer=result.get("answer", "Unable to generate an answer."),
-                language_used=request.language,
-                citations=citations,
-                trace=Trace(
-                    retrieval_count=len(result.get("retrieved_chunks", [])),
-                    latency_ms=latency_ms,
-                    model=settings.llm_model,
-                ),
-            )
-            
-            logger.info(
-                f"Request completed: citations={len(citations)}, "
-                f"latency={latency_ms}ms"
-            )
-            
-            return response
-            
-        except Exception as e:
-            logger.error(f"Request failed: {e}")
-            
-            # Return error response in expected format
-            latency_ms = int((time.time() - start_time) * 1000)
-            
-            return AskResponse(
-                answer=f"Unable to process request: {str(e)}",
-                language_used=request.language,
-                citations=[],
-                trace=Trace(
-                    retrieval_count=0,
-                    latency_ms=latency_ms,
-                    model=settings.llm_model,
-                ),
-            )
+        }
+
+
+def should_continue(state: ContentQAState) -> Literal["tools", "done"]:
+    """Check if there are pending tool calls."""
+    last_message = state["messages"][-1]
     
-    def health_check(self) -> Dict[str, Any]:
-        """Check agent health status.
+    if not isinstance(last_message, AIMessage):
+        return "done"
         
-        Returns:
-            Health status information
-        """
-        try:
-            # Test graph compilation
-            graph = self.graph
-            
-            return {
-                "status": "healthy",
-                "agent": self.name,
-                "version": self.version,
-                "graph_compiled": graph is not None,
-            }
-            
-        except Exception as e:
-            return {
-                "status": "unhealthy",
-                "agent": self.name,
-                "version": self.version,
-                "error": str(e),
-            }
+    if last_message.tool_calls:
+        logger.debug(f"Tool calls pending: {len(last_message.tool_calls)}")
+        return "tools"
+        
+    return "done"
 
 
-# Global agent instance (singleton)
-_content_qa_agent: ContentQAAgent | None = None
+# Build the agent graph - Simple 2-node design
+agent_graph = StateGraph(ContentQAState)
+
+# Add nodes
+agent_graph.add_node("model", call_model)
+agent_graph.add_node("tools", ToolNode(content_qa_tools))
+
+# Set entry point
+agent_graph.set_entry_point("model")
+
+# Add edges
+agent_graph.add_edge("tools", "model")  # Always go back to model after tools
+agent_graph.add_conditional_edges(
+    "model", 
+    should_continue, 
+    {"tools": "tools", "done": END}
+)
+
+# Compile the agent
+content_qa_agent = agent_graph.compile()
 
 
-def get_content_qa_agent() -> ContentQAAgent:
-    """Get the global ContentQA agent instance.
-    
-    Returns:
-        ContentQAAgent: Global agent instance
-    """
-    global _content_qa_agent
-    if _content_qa_agent is None:
-        _content_qa_agent = ContentQAAgent()
-    return _content_qa_agent
+# Export the compiled agent directly
+# This is what gets imported and used
+__all__ = ["content_qa_agent"]

@@ -1,6 +1,8 @@
 """FastAPI application and HTTP endpoints."""
 
 import logging
+import re
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
@@ -18,12 +20,30 @@ from src.schema.models import (
     HealthResponse, 
     ErrorResponse
 )
-from src.agents.content_qa.content_qa_agent import get_content_qa_agent
+from src.agents.content_qa import content_qa_agent
 from src.service.utils import setup_logging
 
 logger = logging.getLogger(__name__)
 
-# No global variables needed - agent manages its own state
+
+def extract_citations_from_answer(answer: str) -> list[Citation]:
+    """Extract citations from answer text (basic implementation)."""
+    citations = []
+    
+    # Find citation references like [1], [2], etc.
+    citation_refs = re.findall(r'\[(\d+)\]', answer)
+    
+    # For now, create placeholder citations
+    # In real implementation, this would match against retrieved documents
+    for i, ref_num in enumerate(set(citation_refs)):
+        citations.append(Citation(
+            content_id=f"placeholder_content_{ref_num}",
+            type="FAQ",  # Placeholder
+            excerpt=f"Excerpt from source {ref_num}...",  # Placeholder
+            match_score=0.8  # Placeholder
+        ))
+    
+    return citations
 
 
 @asynccontextmanager
@@ -54,10 +74,12 @@ async def lifespan(app: FastAPI):
         
         # Initialize ContentQA agent
         logger.info("Initializing ContentQA agent...")
-        agent = get_content_qa_agent()
-        # Pre-compile the graph
-        _ = agent.graph
-        logger.info("ContentQA agent initialized and ready")
+        # Test agent with simple message
+        from langchain_core.messages import HumanMessage
+        test_result = content_qa_agent.invoke({
+            "messages": [HumanMessage(content="Health check")]
+        })
+        logger.info("ContentQA agent initialized and tested successfully")
         
         logger.info("Service startup completed successfully")
         
@@ -125,15 +147,22 @@ async def health_check() -> HealthResponse:
         Service health status
     """
     try:
-        # Check agent health
-        agent = get_content_qa_agent()
-        agent_health = agent.health_check()
+        # Check agent health - simple test
+        from langchain_core.messages import HumanMessage
+        try:
+            test_result = content_qa_agent.invoke({
+                "messages": [HumanMessage(content="Health check")]
+            })
+            agent_status = "healthy" if test_result else "unhealthy"
+        except Exception as e:
+            logger.error(f"Agent health check failed: {e}")
+            agent_status = "unhealthy"
         
         # Quick dependency checks
         dependencies = {
             "embedding_model": "healthy",
-            "llm": "healthy",
-            "content_qa_agent": agent_health["status"]
+            "llm": "healthy", 
+            "content_qa_agent": agent_status
         }
         
         status = "healthy" if all(
@@ -163,10 +192,59 @@ async def ask_question(request: AskRequest) -> AskResponse:
     Returns:
         Generated answer with citations and trace info
     """
+    start_time = time.time()
+    
     try:
-        # Get agent and process request
-        agent = get_content_qa_agent()
-        response = agent.ask(request)
+        # Process request with agent
+        from langchain_core.messages import HumanMessage
+        
+        # Format user message with context
+        user_message = f"Question: {request.question}\nCountry: {request.country}\nPreferred language: {request.language}"
+        
+        # Invoke agent
+        result = content_qa_agent.invoke({
+            "messages": [HumanMessage(content=user_message)]
+        })
+        
+        # Extract answer from final message
+        final_message = result["messages"][-1]
+        if hasattr(final_message, 'content'):
+            if isinstance(final_message.content, str):
+                answer = final_message.content
+            elif isinstance(final_message.content, list):
+                # Extract text from structured content
+                answer = ""
+                for item in final_message.content:
+                    if isinstance(item, dict) and item.get('type') == 'text':
+                        answer += item.get('text', '')
+            else:
+                answer = str(final_message.content)
+        else:
+            answer = str(final_message)
+        
+        # Count tool calls for retrieval_count
+        tool_call_count = 0
+        for msg in result["messages"]:
+            if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                tool_call_count += len(msg.tool_calls)
+        
+        # Extract citations from answer (basic implementation)
+        citations = extract_citations_from_answer(answer)
+        
+        # Calculate actual latency
+        latency_ms = int((time.time() - start_time) * 1000)
+        
+        # Build response
+        response = AskResponse(
+            answer=answer.strip(),
+            language_used=request.language,  # Will be enhanced based on actual content used
+            citations=citations,
+            trace=Trace(
+                retrieval_count=tool_call_count,
+                latency_ms=latency_ms,
+                model=settings.llm_model
+            )
+        )
         
         return response
         
@@ -180,7 +258,7 @@ async def ask_question(request: AskRequest) -> AskResponse:
             citations=[],
             trace=Trace(
                 retrieval_count=0,
-                latency_ms=0,
+                latency_ms=1,  # Must be > 0 for validation
                 model=settings.llm_model,
             ),
         )

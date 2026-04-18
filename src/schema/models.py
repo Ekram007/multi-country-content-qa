@@ -142,7 +142,7 @@ class HealthResponse(BaseModel):
     """Health check response schema."""
     
     status: Literal["healthy", "unhealthy"] = Field(..., description="Service health status")
-    timestamp: datetime = Field(default_factory=datetime.utcnow, description="Check timestamp")
+    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat(), description="Check timestamp")
     version: str = Field("0.1.0", description="API version")
     dependencies: Optional[dict] = Field(
         default=None, 
@@ -155,7 +155,7 @@ class ErrorResponse(BaseModel):
     
     error: str = Field(..., description="Error message")
     error_code: Optional[str] = Field(default=None, description="Machine-readable error code")
-    timestamp: datetime = Field(default_factory=datetime.utcnow, description="Error timestamp")
+    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat(), description="Error timestamp")
     request_id: Optional[str] = Field(default=None, description="Request identifier for tracking")
 
 
