@@ -26,7 +26,13 @@ from src.service.utils import setup_logging
 logger = logging.getLogger(__name__)
 
 
-MAX_EXCERPT_LEN = 320
+# Hard cap for API excerpts; spans are shrunk to matching words when possible.
+MAX_EXCERPT_LEN = 200
+# How much Qdrant retrieval vs answer–source overlap contributes to citation match_score.
+_RETRIEVAL_SCORE_WEIGHT = 0.35
+_ANSWER_OVERLAP_WEIGHT = 0.65
+
+_CITATION_MARKERS_RE = re.compile(r"\[\d+\]")
 
 
 def _normalize_answer_text(answer: str) -> str:
@@ -42,6 +48,144 @@ def _normalize_answer_text(answer: str) -> str:
                 parts.append(str(item))
         return "".join(parts)
     return str(answer)
+
+
+def _answer_content_tokens(answer: str, min_len: int = 3) -> set[str]:
+    """Word-like tokens from the final answer for overlap scoring (Unicode-aware)."""
+    plain = _CITATION_MARKERS_RE.sub(" ", answer.lower())
+    return {w for w in re.findall(r"\w+", plain, flags=re.UNICODE) if len(w) >= min_len}
+
+
+def _tokens_from_text(text: str, min_len: int = 3) -> set[str]:
+    return {w for w in re.findall(r"\w+", text.lower(), flags=re.UNICODE) if len(w) >= min_len}
+
+
+def _split_into_sentences(body: str) -> list[str]:
+    """Split on common sentence boundaries (incl. Devanagari danda)."""
+    body = body.strip()
+    if not body:
+        return []
+    parts = re.split(r"(?<=[.!?।])\s+", body)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _compress_whitespace(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _compress_to_matching_word_span(text: str, answer_tokens: set[str], pad_words: int = 1) -> str:
+    """Keep only a tight run of words around tokens that appear in the answer (plus small padding)."""
+    text = text.strip()
+    if not text or not answer_tokens:
+        return text
+    words = text.split()
+    if not words:
+        return text
+    hit: list[int] = []
+    for i, raw in enumerate(words):
+        for tok in re.findall(r"\w+", raw.lower(), flags=re.UNICODE):
+            if len(tok) >= 3 and tok in answer_tokens:
+                hit.append(i)
+                break
+    if not hit:
+        return text
+    lo = max(0, min(hit) - pad_words)
+    hi = min(len(words) - 1, max(hit) + pad_words)
+    return _compress_whitespace(" ".join(words[lo : hi + 1]))
+
+
+def select_excerpt_and_answer_overlap(
+    body: str,
+    answer: str,
+    max_len: int,
+) -> tuple[str, float]:
+    """Pick a short excerpt whose wording overlaps the answer; return (excerpt, overlap score).
+
+    Overlap is |answer_tokens ∩ window_tokens| / |answer_tokens| in [0, 1].
+    Falls back to a length-truncated prefix when the answer gives no signal or overlap is negligible.
+    """
+    body = (body or "").strip()
+    if not body:
+        return "", 0.0
+
+    answer_plain = _normalize_answer_text(answer)
+    answer_tokens = _answer_content_tokens(answer_plain)
+    if not answer_tokens:
+        excerpt = body[:max_len] + ("..." if len(body) > max_len else "")
+        return excerpt.rstrip(), 0.0
+
+    sentences = _split_into_sentences(body)
+    if not sentences:
+        sentences = [body]
+
+    def overlap_score(window_text: str) -> float:
+        w_tokens = _tokens_from_text(window_text)
+        if not w_tokens:
+            return 0.0
+        inter = len(answer_tokens & w_tokens)
+        return inter / max(1, len(answer_tokens))
+
+    best_overlap = 0.0
+    best_window = sentences[0]
+
+    max_k = min(3, len(sentences))
+    for k in range(1, max_k + 1):
+        for i in range(0, len(sentences) - k + 1):
+            window_text = " ".join(sentences[i : i + k])
+            score = overlap_score(window_text)
+            if score > best_overlap:
+                best_overlap = score
+                best_window = window_text
+            elif score == best_overlap and score > 0.0 and len(window_text) < len(best_window):
+                best_window = window_text
+
+    # Among windows within a hair of the best score, keep the shortest (jototuk match tototuk).
+    _tie_eps = 0.02
+    shortest = best_window
+    shortest_len = len(best_window)
+    for k in range(1, max_k + 1):
+        for i in range(0, len(sentences) - k + 1):
+            window_text = " ".join(sentences[i : i + k])
+            score = overlap_score(window_text)
+            if score >= best_overlap - _tie_eps and len(window_text) < shortest_len:
+                shortest = window_text
+                shortest_len = len(window_text)
+    best_window = shortest
+
+    # Long unpunctuated blobs: coarse sliding windows so we are not stuck on the prefix only.
+    if best_overlap < 0.06 and len(body) > max_len * 2:
+        step = max(32, max_len // 2)
+        upper = min(len(body), 6000)
+        for start in range(0, upper, step):
+            end = min(len(body), start + max_len * 4)
+            chunk = body[start:end]
+            score = overlap_score(chunk)
+            if score > best_overlap:
+                best_overlap = score
+                inner_sents = _split_into_sentences(chunk) or [chunk]
+                inner_best = inner_sents[0]
+                inner_score = overlap_score(inner_best)
+                for s in inner_sents:
+                    sc = overlap_score(s)
+                    if sc > inner_score or (
+                        sc == inner_score and len(s) < len(inner_best)
+                    ):
+                        inner_score = sc
+                        inner_best = s
+                best_window = _compress_to_matching_word_span(
+                    inner_best, answer_tokens, pad_words=1
+                )
+
+    excerpt = _compress_to_matching_word_span(best_window, answer_tokens, pad_words=1)
+    if len(excerpt) > max_len:
+        cut = excerpt[: max_len - 3].rsplit(" ", 1)[0].strip()
+        excerpt = (cut + "...") if cut else excerpt[: max_len].rstrip() + "..."
+
+    if best_overlap < 0.03:
+        excerpt = body[:max_len] + ("..." if len(body) > max_len else "")
+        excerpt = excerpt.rstrip()
+
+    return excerpt, min(1.0, best_overlap)
 
 
 def parse_retrieved_documents_from_search_content_output(tool_content: str) -> dict[int, dict]:
@@ -70,13 +214,15 @@ def parse_retrieved_documents_from_search_content_output(tool_content: str) -> d
         idx = int(m.group(1))
         score_str = m.group(6)
         body = (m.group(7) or "").strip()
-        excerpt = body[:MAX_EXCERPT_LEN] + ("..." if len(body) > MAX_EXCERPT_LEN else "")
+        retrieval_score = float(score_str) if score_str else 0.0
+        prefix_excerpt = body[:MAX_EXCERPT_LEN] + ("..." if len(body) > MAX_EXCERPT_LEN else "")
         documents[idx] = {
             "content_id": m.group(4).strip(),
             "type": m.group(2).strip(),
             "title": m.group(3).strip(),
-            "excerpt": excerpt,
-            "match_score": float(score_str) if score_str else 0.0,
+            "body": body,
+            "excerpt": prefix_excerpt,
+            "match_score": retrieval_score,
             "language": m.group(5).strip(),
         }
     return documents
@@ -100,12 +246,22 @@ def build_citations_from_retrieval(
     citations: list[Citation] = []
     for i in use_indices:
         doc = retrieved_by_index[i]
+        body = doc.get("body") or doc.get("excerpt") or ""
+        excerpt, overlap = select_excerpt_and_answer_overlap(body, answer_plain, MAX_EXCERPT_LEN)
+        retrieval = float(doc.get("match_score", 0.0) or 0.0)
+        retrieval = min(1.0, max(0.0, retrieval))
+        if overlap > 0.0:
+            combined = (
+                _RETRIEVAL_SCORE_WEIGHT * retrieval + _ANSWER_OVERLAP_WEIGHT * overlap
+            )
+        else:
+            combined = retrieval
         citations.append(
             Citation(
                 content_id=doc["content_id"],
                 type=doc["type"],
-                excerpt=doc["excerpt"],
-                match_score=round(min(1.0, max(0.0, doc["match_score"])), 2),
+                excerpt=excerpt,
+                match_score=round(min(1.0, max(0.0, combined)), 2),
             )
         )
     return citations, len(retrieved_by_index)

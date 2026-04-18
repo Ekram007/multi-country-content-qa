@@ -3,7 +3,11 @@
 import pytest
 
 from src.schema.models import Citation
-from src.service.api import build_citations_from_retrieval, parse_retrieved_documents_from_search_content_output
+from src.service.api import (
+    build_citations_from_retrieval,
+    parse_retrieved_documents_from_search_content_output,
+    select_excerpt_and_answer_overlap,
+)
 
 
 def _sample_tool_output() -> str:
@@ -29,7 +33,43 @@ class TestCitationParsing:
         assert docs[1]["content_id"] == "b_faq_returns_es"
         assert docs[1]["type"] == "FAQ"
         assert pytest.approx(docs[1]["match_score"], rel=1e-4) == 0.9123
+        assert "7 días" in docs[1]["body"]
         assert "7 días" in docs[1]["excerpt"]
+
+    def test_excerpt_prefers_sentences_overlapping_answer(self):
+        body = (
+            "These terms govern your use of the platform in Country C. "
+            "You must be a legally registered business entity to open an account. "
+            "In Country C you can close your account directly from account settings. "
+            "Closure takes effect immediately. Any unpaid invoices must be settled within 30 days of closure."
+        )
+        answer = (
+            "Yes. In Country C, you can close your account from account settings "
+            "and closure is immediate. Unpaid invoices must be settled within 30 days."
+        )
+        excerpt, overlap = select_excerpt_and_answer_overlap(body, answer, 320)
+        assert "close your account" in excerpt.lower()
+        assert "30 days" in excerpt
+        assert overlap > 0.25
+
+    def test_match_score_blends_retrieval_and_answer_overlap(self):
+        tool = (
+            "Content found in en for country C:\nSearch query: close account\n\n"
+            "[1] TERMS_AND_CONDITIONS - Terms\n"
+            "Content ID: c_tc_en_v1\n"
+            "Language: en\n"
+            "Score: 0.40\n"
+            "Content: These terms govern your use of the platform in Country C. "
+            "In Country C you can close your account directly from account settings. "
+            "Closure takes effect immediately.\n"
+        )
+        docs = parse_retrieved_documents_from_search_content_output(tool)
+        answer = "You may close your account from settings; closure is immediate [1]."
+        citations, _ = build_citations_from_retrieval(docs, answer)
+        assert len(citations) == 1
+        assert "close your account" in citations[0].excerpt.lower()
+        # Combined score should reflect both retrieval (0.40) and strong overlap (>0.4)
+        assert citations[0].match_score > 0.45
 
     def test_build_citations_aligns_with_citation_marker(self):
         docs = parse_retrieved_documents_from_search_content_output(_sample_tool_output())
