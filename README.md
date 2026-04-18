@@ -155,13 +155,6 @@ EVAL_SLEEP_SECONDS=20 uv run python scripts/evaluate.py
 3. **Multi-tenant Isolation**: Enforced at query time via Qdrant filters, not post-processing.
 4. **Citations API**: Built from retrieved chunks (parsed from tool output); `match_score` reflects retrieval similarity; excerpts are sourced from stored content bodies.
 
-## Performance Characteristics
-
-- **Startup Time**: ~7-10 seconds (pre-loads embedding model with reduced logging)
-- **Device Detection**: Auto-detects best available (MPS/Apple GPU → CUDA/NVIDIA → CPU)
-- **First Request**: Fast (~2-3 seconds after startup)
-- **Subsequent Requests**: Very fast (~1-2 seconds)
-- **Throughput**: Limited by LLM provider rate limits, not system architecture
 
 ## Known Limitations
 
