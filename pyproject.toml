@@ -23,3 +23,8 @@ dev = [
     "pytest",
     "pytest-asyncio",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]

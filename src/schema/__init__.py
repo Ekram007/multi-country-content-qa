@@ -1,0 +1,1 @@
+"""Data schemas and models for the Q&A system."""

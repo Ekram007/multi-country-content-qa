@@ -15,7 +15,9 @@ services:
       retries: 10
 
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.app
     ports:
       - "8000:8000"
     env_file:

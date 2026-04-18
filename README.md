@@ -31,24 +31,37 @@ docker run -d -p 6333:6333 qdrant/qdrant
 ./setup.sh
 ```
 
-### Manual Setup (Alternative)
+### Individual Commands (Agent-Service-Toolkit Style)
 
 ```bash
 # Install dependencies
 uv sync
 
-# Ingest content corpus
-uv run python -m app.ingestion.ingest
+# Run corpus ingestion
+uv run python -m src.run_ingest
 
-# Start API server
-uv run uvicorn app.api.main:app --host 0.0.0.0 --port 8000
+# Run API service  
+uv run python -m src.run_service
+
+# Interactive agent CLI
+uv run python -m src.run_agent
+
+# Direct agent query (CLI)
+uv run python -m src.run_agent ask "What is your return policy?" A en
+
+# Health check (CLI)
+uv run python -m src.run_agent health
 ```
 
 ### Docker Setup (Alternative)
 
 ```bash
-# Start everything with Docker Compose (uv.lock included for reproducible builds)
+# Start everything with Docker Compose
 docker-compose up -d
+
+# Or build individual containers (agent-service-toolkit style)
+docker build -f docker/Dockerfile.app -t content-qa:app .
+docker build -f docker/Dockerfile.service -t content-qa:service .
 ```
 
 ## Example Usage
@@ -110,10 +123,10 @@ When content doesn't exist in the requested language for a country, the system f
 uv run pytest tests/ -v
 
 # Run evaluation harness
-uv run python evaluate.py
+uv run python scripts/evaluate.py
 
 # Run with custom spacing (for rate-limited LLM providers)
-EVAL_SLEEP_SECONDS=20 uv run python evaluate.py
+EVAL_SLEEP_SECONDS=20 uv run python scripts/evaluate.py
 ```
 
 ## Architecture
@@ -199,26 +212,49 @@ EVAL_SLEEP_SECONDS=20 uv run python evaluate.py
 ## Project Structure
 
 ```
-├── app/
-│   ├── agent/           # LangGraph agent implementation
-│   │   ├── graph.py     # State graph definition
-│   │   ├── nodes.py     # Graph node functions  
-│   │   ├── state.py     # State schema
-│   │   └── llm.py       # LLM provider abstraction
-│   ├── api/             # FastAPI application
-│   │   └── main.py      # HTTP server and /ask endpoint
-│   ├── config/          # Configuration management
-│   │   └── settings.py  # Pydantic settings
+├── scripts/             # 📜 Utility scripts (agent-service-toolkit style)
+│   └── evaluate.py     # Evaluation harness (10 test cases)
+├── src/
+│   ├── run_service.py   # 🚀 Service runner (agent-service-toolkit style)
+│   ├── run_ingest.py    # 📁 Ingestion runner 
+│   ├── run_agent.py     # 🤖 Interactive agent CLI
+│   ├── core/            # Core utilities and configuration
+│   │   ├── settings.py  # Application settings
+│   │   ├── llm.py       # LLM provider abstraction
+│   │   └── embeddings.py# Embedding model wrapper
+│   ├── agents/          # Agent implementations (agent-service-toolkit style)
+│   │   └── content_qa/  # Multi-country Q&A agent
+│   │       ├── content_qa_agent.py  # Main agent class (self-contained)
+│   │       ├── tools.py             # Agent tools and functions
+│   │       └── schema.py            # Data schemas and state models
+│   ├── schema/          # Data models and schemas
+│   │   └── models.py    # Pydantic models
+│   ├── service/         # HTTP API service layer
+│   │   ├── api.py       # FastAPI application
+│   │   └── utils.py     # Service utilities
 │   ├── ingestion/       # Data ingestion pipeline
-│   │   ├── ingest.py    # Corpus loading and embedding
-│   │   ├── embeddings.py # Sentence transformer wrapper
-│   │   └── retriever.py # Qdrant query interface
-│   └── models/          # Data schemas
-│       └── schemas.py   # Pydantic models
+│   │   ├── ingest.py    # Corpus ingestion
+│   │   └── retriever.py # Vector search interface
+│   ├── prompts/         # LLM prompt templates (text files only)
+│   │   ├── synthesis.txt          # Main Q&A prompt
+│   │   └── synthesis_fallback.txt # Fallback Q&A prompt
+│   └── knowledge_base/  # Knowledge base management
+│       └── corpus.py    # Corpus loading utilities
+├── tests/               # 🧪 Organized test suite (agent-service-toolkit style)
+│   ├── core/           # Core functionality tests
+│   │   ├── test_filtering.py   # Metadata filtering tests
+│   │   └── test_citations.py   # Citation extraction tests
+│   ├── agents/         # Agent-specific tests
+│   │   └── test_validation.py  # Input validation tests
+│   ├── integration/    # Integration tests (future use)
+│   └── conftest.py     # Shared test fixtures
+├── docker/              # Docker configuration (agent-service-toolkit style)
+│   ├── Dockerfile.app      # Application container
+│   └── Dockerfile.service  # Service container  
 ├── tests/               # Unit tests
 ├── data/               # Corpus data
 ├── screenshots/        # Visual evidence
-├── evaluate.py         # Evaluation harness
+├── scripts/evaluate.py # Evaluation harness
 ├── AI-Interview.txt    # Original technical specification
 └── docker-compose.yml  # Docker orchestration
 ```

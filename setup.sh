@@ -24,11 +24,11 @@ echo "📦 Installing dependencies..."
 uv sync
 
 echo "📁 Ingesting corpus (44 items)..."
-uv run python -m app.ingestion.ingest
+uv run python -m src.run_ingest
 
 echo "🔥 Starting API server..."
 echo "API will be available at: http://localhost:8000"
 echo "Test endpoint: curl -X POST http://localhost:8000/ask -H 'Content-Type: application/json' -d '{\"question\":\"What is your return policy?\",\"country\":\"A\",\"language\":\"en\"}'"
 echo ""
 
-uv run uvicorn app.api.main:app --host 0.0.0.0 --port 8000
+uv run python -m src.run_service
