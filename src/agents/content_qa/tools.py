@@ -79,10 +79,12 @@ def search_content(query: str, country: str, language: str = "en", top_k: int = 
                 content_parts.append("")
                 
                 for i, doc in enumerate(results, 1):
+                    score = doc.get("score", 0.0)
                     content_parts.append(
                         f"[{i}] {doc['type']} - {doc['title']}\n"
                         f"Content ID: {doc['content_id']}\n"
                         f"Language: {doc['language']}\n"
+                        f"Score: {score:.4f}\n"
                         f"Content: {doc['body']}\n"
                     )
                 

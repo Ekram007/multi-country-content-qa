@@ -26,24 +26,102 @@ from src.service.utils import setup_logging
 logger = logging.getLogger(__name__)
 
 
-def extract_citations_from_answer(answer: str) -> list[Citation]:
-    """Extract citations from answer text (basic implementation)."""
-    citations = []
-    
-    # Find citation references like [1], [2], etc.
-    citation_refs = re.findall(r'\[(\d+)\]', answer)
-    
-    # For now, create placeholder citations
-    # In real implementation, this would match against retrieved documents
-    for i, ref_num in enumerate(set(citation_refs)):
-        citations.append(Citation(
-            content_id=f"placeholder_content_{ref_num}",
-            type="FAQ",  # Placeholder
-            excerpt=f"Excerpt from source {ref_num}...",  # Placeholder
-            match_score=0.8  # Placeholder
-        ))
-    
-    return citations
+MAX_EXCERPT_LEN = 320
+
+
+def _normalize_answer_text(answer: str) -> str:
+    """Flatten Gemini / multi-part content to plain string."""
+    if isinstance(answer, str):
+        return answer
+    if isinstance(answer, list):
+        parts: list[str] = []
+        for item in answer:
+            if isinstance(item, dict) and item.get("type") == "text":
+                parts.append(str(item.get("text", "")))
+            else:
+                parts.append(str(item))
+        return "".join(parts)
+    return str(answer)
+
+
+def parse_retrieved_documents_from_search_content_output(tool_content: str) -> dict[int, dict]:
+    """Parse search_content tool return text into index -> document fields."""
+    documents: dict[int, dict] = {}
+    if not tool_content or "Content ID:" not in tool_content:
+        return documents
+
+    # Split on blank lines before each "[n] TYPE - title" block
+    blocks = re.split(r"\n(?=\[\d+\]\s)", tool_content.strip())
+    block_re = re.compile(
+        r"^\[(\d+)\]\s+(\S+)\s+-\s+(.+?)\n"
+        r"Content ID:\s*(.+?)\n"
+        r"Language:\s*(.+?)\n"
+        r"(?:Score:\s*([0-9.+-eE]+)\n)?"
+        r"Content:\s*(.+)$",
+        re.DOTALL | re.MULTILINE,
+    )
+    for block in blocks:
+        block = block.strip()
+        if not block.startswith("["):
+            continue
+        m = block_re.match(block)
+        if not m:
+            continue
+        idx = int(m.group(1))
+        score_str = m.group(6)
+        body = (m.group(7) or "").strip()
+        excerpt = body[:MAX_EXCERPT_LEN] + ("..." if len(body) > MAX_EXCERPT_LEN else "")
+        documents[idx] = {
+            "content_id": m.group(4).strip(),
+            "type": m.group(2).strip(),
+            "title": m.group(3).strip(),
+            "excerpt": excerpt,
+            "match_score": float(score_str) if score_str else 0.0,
+            "language": m.group(5).strip(),
+        }
+    return documents
+
+
+def build_citations_from_retrieval(
+    retrieved_by_index: dict[int, dict],
+    answer: str,
+) -> tuple[list[Citation], int]:
+    """Build API citations from RAG chunks; align with cited [n] when present."""
+    answer_plain = _normalize_answer_text(answer)
+    cited_indices = sorted({int(x) for x in re.findall(r"\[(\d+)\]", answer_plain)})
+
+    if cited_indices:
+        use_indices = [i for i in cited_indices if i in retrieved_by_index]
+        if not use_indices:
+            use_indices = sorted(retrieved_by_index.keys())
+    else:
+        use_indices = sorted(retrieved_by_index.keys())
+
+    citations: list[Citation] = []
+    for i in use_indices:
+        doc = retrieved_by_index[i]
+        citations.append(
+            Citation(
+                content_id=doc["content_id"],
+                type=doc["type"],
+                excerpt=doc["excerpt"],
+                match_score=round(min(1.0, max(0.0, doc["match_score"])), 2),
+            )
+        )
+    return citations, len(retrieved_by_index)
+
+
+def extract_retrieval_from_agent_messages(messages: list) -> dict[int, dict]:
+    """Last search_content tool output wins (final retrieval set for this turn)."""
+    from langchain_core.messages import ToolMessage
+
+    last_docs: dict[int, dict] = {}
+    for msg in messages:
+        if isinstance(msg, ToolMessage) and getattr(msg, "name", None) == "search_content":
+            content = msg.content
+            if isinstance(content, str):
+                last_docs = parse_retrieved_documents_from_search_content_output(content)
+    return last_docs
 
 
 @asynccontextmanager
@@ -208,28 +286,18 @@ async def ask_question(request: AskRequest) -> AskResponse:
         
         # Extract answer from final message
         final_message = result["messages"][-1]
-        if hasattr(final_message, 'content'):
-            if isinstance(final_message.content, str):
-                answer = final_message.content
-            elif isinstance(final_message.content, list):
-                # Extract text from structured content
-                answer = ""
-                for item in final_message.content:
-                    if isinstance(item, dict) and item.get('type') == 'text':
-                        answer += item.get('text', '')
-            else:
-                answer = str(final_message.content)
-        else:
-            answer = str(final_message)
+        raw_content = (
+            final_message.content
+            if hasattr(final_message, "content")
+            else str(final_message)
+        )
+        answer = _normalize_answer_text(raw_content)
         
-        # Count tool calls for retrieval_count
-        tool_call_count = 0
-        for msg in result["messages"]:
-            if hasattr(msg, 'tool_calls') and msg.tool_calls:
-                tool_call_count += len(msg.tool_calls)
-        
-        # Extract citations from answer (basic implementation)
-        citations = extract_citations_from_answer(answer)
+        retrieved_by_index = extract_retrieval_from_agent_messages(result["messages"])
+        citations, retrieval_count = build_citations_from_retrieval(
+            retrieved_by_index,
+            answer,
+        )
         
         # Calculate actual latency
         latency_ms = int((time.time() - start_time) * 1000)
@@ -237,13 +305,13 @@ async def ask_question(request: AskRequest) -> AskResponse:
         # Build response
         response = AskResponse(
             answer=answer.strip(),
-            language_used=request.language,  # Will be enhanced based on actual content used
+            language_used=request.language,
             citations=citations,
             trace=Trace(
-                retrieval_count=tool_call_count,
-                latency_ms=latency_ms,
-                model=settings.llm_model
-            )
+                retrieval_count=retrieval_count,
+                latency_ms=max(1, latency_ms),
+                model=settings.llm_model,
+            ),
         )
         
         return response
