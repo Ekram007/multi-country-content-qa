@@ -31,7 +31,7 @@ docker run -d -p 6333:6333 qdrant/qdrant
 ./setup.sh
 ```
 
-### Individual Commands (Agent-Service-Toolkit Style)
+### Individual Commands
 
 ```bash
 # Install dependencies
@@ -59,7 +59,7 @@ uv run python -m src.run_agent health
 # Start everything with Docker Compose
 docker-compose up -d
 
-# Or build individual containers (agent-service-toolkit style)
+# Or build individual containers
 docker build -f docker/Dockerfile.app -t content-qa:app .
 docker build -f docker/Dockerfile.service -t content-qa:service .
 ```
@@ -78,28 +78,30 @@ curl -X POST http://localhost:8000/ask \
 ```
 
 ### Expected Response
+
+Shape matches [`AI-Interview.txt`](./AI-Interview.txt) (`content_id`, `type`, `excerpt`, `match_score` — no `title` on citations; `trace` has only `retrieval_count`, `latency_ms`, `model`).
+
 ```json
 {
-  "answer": "Puede devolver cualquier artículo dentro de los 7 días posteriores a la entrega para un reembolso completo [1]. Los artículos defectuosos pueden devolverse dentro de los 30 días [1].",
+  "answer": "You may return any item within 7 days of delivery for a full refund [1]. ...",
   "language_used": "es",
   "citations": [
     {
       "content_id": "b_faq_returns_es",
       "type": "FAQ",
-      "title": "¿Cuál es su política de devoluciones?",
-      "excerpt": "Puede devolver cualquier artículo dentro de los 7 días posteriores a la entrega para un reembolso completo, sin preguntas.",
+      "excerpt": "Puede devolver cualquier artículo dentro de los 7 días...",
       "match_score": 0.87
     }
   ],
   "trace": {
-    "retrieval_count": 2,
+    "retrieval_count": 5,
     "latency_ms": 2334,
-    "model": "gemini-2.5-flash",
-    "fallback_used": false,
-    "fallback_language": null
+    "model": "gemini-2.5-flash"
   }
 }
 ```
+
+Values vary by run (`retrieval_count` follows retrieved chunks, typically `top_k=5`; `match_score` comes from Qdrant similarity).
 
 ## Multi-Tenant Isolation
 
@@ -153,14 +155,13 @@ EVAL_SLEEP_SECONDS=20 uv run python scripts/evaluate.py
 
 ### Key Components
 
-1. **LangGraph Agent**: 6-node state machine with conditional routing:
-   - validate_input → retrieve → [fallback_retrieve] → synthesize → extract_citations
-   
-2. **Qdrant Integration**: Vector similarity search with metadata pre-filtering on country/language
-   
-3. **Multi-tenant Isolation**: Enforced at query time via Qdrant filters, not post-processing
+1. **LangGraph Agent**: Tool-calling graph (`model` ↔ `tools`) — LLM invokes `search_content` (RAG) then answers; explicit nodes and edges in `src/agents/content_qa/content_qa_agent.py`.
 
-4. **Citation Verification**: Fuzzy matching between generated answer excerpts and source content
+2. **Qdrant Integration**: Vector similarity search with metadata pre-filtering on country/language **before** ranking (no post-filter leak).
+
+3. **Multi-tenant Isolation**: Enforced at query time via Qdrant filters, not post-processing.
+
+4. **Citations API**: Built from retrieved chunks (parsed from tool output); `match_score` reflects retrieval similarity; excerpts are sourced from stored content bodies.
 
 ## Performance Characteristics
 
@@ -175,7 +176,7 @@ EVAL_SLEEP_SECONDS=20 uv run python scripts/evaluate.py
 - **LLM Rate Limits**: Free-tier APIs (Gemini 5 req/min) may cause 429 errors during high-volume evaluation
 - **Embedding Quality**: Uses sentence-transformers locally; commercial embeddings would improve cross-lingual retrieval  
 - **No Conversation Memory**: Each request is stateless
-- **Basic Citation Matching**: Uses SequenceMatcher; production would benefit from semantic similarity
+- **Fixed top-K**: Default `top_k=5` retrieval (not adaptive); tune via tool/retriever if needed
 - **No Authentication**: API is open; production needs authN/authZ
 
 ## What I Would Do Next With More Time
@@ -212,21 +213,20 @@ EVAL_SLEEP_SECONDS=20 uv run python scripts/evaluate.py
 ## Project Structure
 
 ```
-├── scripts/             # 📜 Utility scripts (agent-service-toolkit style)
+├── scripts/             # 📜 Utility scripts
 │   └── evaluate.py     # Evaluation harness (10 test cases)
 ├── src/
-│   ├── run_service.py   # 🚀 Service runner (agent-service-toolkit style)
+│   ├── run_service.py   # 🚀 Service entry
 │   ├── run_ingest.py    # 📁 Ingestion runner 
 │   ├── run_agent.py     # 🤖 Interactive agent CLI
 │   ├── core/            # Core utilities and configuration
 │   │   ├── settings.py  # Application settings
 │   │   ├── llm.py       # LLM provider abstraction
 │   │   └── embeddings.py# Embedding model wrapper
-│   ├── agents/          # Agent implementations (agent-service-toolkit style)
+│   ├── agents/          # Agent implementations
 │   │   └── content_qa/  # Multi-country Q&A agent
-│   │       ├── content_qa_agent.py  # Main agent class (self-contained)
-│   │       ├── tools.py             # Agent tools and functions
-│   │       └── schema.py            # Data schemas and state models
+│   │       ├── content_qa_agent.py  # LangGraph compile (model + tools)
+│   │       └── tools.py             # @tool search_content, get_supported_countries
 │   ├── schema/          # Data models and schemas
 │   │   └── models.py    # Pydantic models
 │   ├── service/         # HTTP API service layer
@@ -236,11 +236,10 @@ EVAL_SLEEP_SECONDS=20 uv run python scripts/evaluate.py
 │   │   ├── ingest.py    # Corpus ingestion
 │   │   └── retriever.py # Vector search interface
 │   ├── prompts/         # LLM prompt templates (text files only)
-│   │   ├── synthesis.txt          # Main Q&A prompt
-│   │   └── synthesis_fallback.txt # Fallback Q&A prompt
+│   │   └── content_qa_agent_system_prompt.txt
 │   └── knowledge_base/  # Knowledge base management
 │       └── corpus.py    # Corpus loading utilities
-├── tests/               # 🧪 Organized test suite (agent-service-toolkit style)
+├── tests/               # 🧪 Test suite
 │   ├── core/           # Core functionality tests
 │   │   ├── test_filtering.py   # Metadata filtering tests
 │   │   └── test_citations.py   # Citation extraction tests
@@ -248,15 +247,14 @@ EVAL_SLEEP_SECONDS=20 uv run python scripts/evaluate.py
 │   │   └── test_validation.py  # Input validation tests
 │   ├── integration/    # Integration tests (future use)
 │   └── conftest.py     # Shared test fixtures
-├── docker/              # Docker configuration (agent-service-toolkit style)
+├── docker/              # Docker configuration
 │   ├── Dockerfile.app      # Application container
-│   └── Dockerfile.service  # Service container  
-├── tests/               # Unit tests
-├── data/               # Corpus data
-├── screenshots/        # Visual evidence
-├── scripts/evaluate.py # Evaluation harness
-├── AI-Interview.txt    # Original technical specification
-└── docker-compose.yml  # Docker orchestration
+│   └── Dockerfile.service  # Service container
+├── data/                  # Corpus data (`corpus.jsonl`)
+├── screenshots/           # Visual evidence (see `AI-Interview.txt` for expected PNGs)
+├── AI-Interview.txt       # Original technical specification
+├── setup.sh               # Ingest + serve (expects Qdrant already reachable)
+└── docker-compose.yml     # Docker orchestration
 ```
 
 ## Dependencies

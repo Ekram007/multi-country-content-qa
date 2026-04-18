@@ -3,7 +3,7 @@
 ## High-Level Flow
 
 ```
-HTTP Request → FastAPI → LangGraph Agent → Qdrant → LLM → HTTP Response
+HTTP Request → FastAPI /ask → LangGraph (model ↔ tools) → Qdrant + LLM → normalize answer → citations & trace → HTTP Response
 ```
 
 ## Detailed Architecture
@@ -11,65 +11,43 @@ HTTP Request → FastAPI → LangGraph Agent → Qdrant → LLM → HTTP Respons
 ```mermaid
 graph TD
     A[HTTP Client] -->|POST /ask| B[FastAPI Server]
-    B --> C[LangGraph Agent]
-    
-    C --> D[validate_input]
-    D -->|valid| E[retrieve_chunks]
-    D -->|invalid| F[no_answer]
-    
-    E --> G[Qdrant Vector DB]
-    G -->|metadata filter: country + language| H[Similarity Search]
-    H -->|found chunks| I[synthesize_answer] 
-    H -->|no chunks| J[fallback_retrieve]
-    
-    J --> K[Try other languages in same country]
-    K -->|found| I
-    K -->|none| F
-    
-    I --> L[LLM Provider]
-    L --> M[extract_citations]
-    M --> N[Citation Verification]
-    N --> O[Format Response]
-    
-    F --> O
-    O --> B
+    B --> C[content_qa_agent]
+    C --> D[model node]
+    D -->|tool_calls| E[ToolNode]
+    E --> F[search_content]
+    E --> G[get_supported_countries]
+    F --> H[Qdrant retrieve]
+    H -->|filtered by country + language| H
+    F -->|formatted chunks + scores| E
+    E --> D
+    D -->|final AIMessage| I[Response builder]
+    I --> J[Parse last search_content ToolMessage]
+    J --> K[build_citations_from_retrieval]
+    K --> L[AskResponse + Trace]
+    L --> B
     B --> A
-    
-    style G fill:#e1f5fe
-    style L fill:#f3e5f5
-    style C fill:#e8f5e8
+
+    style H fill:#e1f5fe
+    style D fill:#e8f5e8
 ```
 
 ## Component Details
 
-### 1. LangGraph State Machine
+### 1. LangGraph Agent (`content_qa_agent`)
 
-**State Schema:**
-```python
-class AgentState(TypedDict):
-    question: str
-    country: str  
-    language: str
-    retrieved_chunks: list[dict]
-    fallback_used: bool
-    fallback_language: str | None
-    answer: str
-    citations: list[dict]
-    llm_failed: bool
-    error: str | None
-    route: str
-```
+**State:** `ContentQAState` extends LangGraph `MessagesState` (plus optional `remaining_steps` for step limits).
 
-**Node Flow:**
-```
-START → validate_input → retrieve → [fallback_retrieve] → synthesize → extract_citations → END
-                      ↓                    ↓               ↓
-                   no_answer ←────────────────────────────────
-```
+**Nodes:**
+- **`model`**: Loads system prompt from `src/prompts/content_qa_agent_system_prompt.txt`, binds `content_qa_tools`, invokes the chat model.
+- **`tools`**: `ToolNode` executing `search_content` and `get_supported_countries`.
+
+**Edges:** `model` → if last `AIMessage` has `tool_calls` → `tools` → `model`; otherwise → `END`.
+
+**Retrieval & fallback:** `search_content` calls `retrieve()` with metadata filters. If nothing is found for the preferred language, it iterates over **supported languages for that country** (see `COUNTRY_LANGUAGES` in `tools.py`) until results exist or all are exhausted.
 
 ### 2. Multi-Tenant Data Isolation
 
-**Qdrant Metadata Structure:**
+**Qdrant Metadata Structure (per point):**
 ```json
 {
   "content_id": "b_faq_returns_es",
@@ -91,26 +69,30 @@ metadata_filter = Filter(must=[
 ])
 ```
 
-### 3. Citation Pipeline
+### 3. Citation Pipeline (API Layer)
 
-1. **Retrieval**: Qdrant returns chunks with similarity scores
-2. **Synthesis**: LLM generates answer with inline citations `[1]`, `[2]`
-3. **Extraction**: Parse citations and extract relevant excerpts
-4. **Verification**: Compute match scores between excerpts and source content
+1. **Retrieval**: `search_content` returns a human-readable block per hit, including **Content ID**, **Language**, **Score** (Qdrant similarity), and **Content** (body).
+2. **Synthesis**: The model produces an answer and may cite sources as `[1]`, `[2]` inline.
+3. **Parsing**: `parse_retrieved_documents_from_search_content_output` in `api.py` maps tool output to indexed documents; excerpts are a **truncated prefix** of each body (see `MAX_EXCERPT_LEN`).
+4. **Assembly**: `build_citations_from_retrieval` aligns citations with `[n]` markers when present; **`match_score`** comes from the parsed **Score** field (clamped to `[0, 1]`).
 
-### 4. Language Fallback Logic
+There is no separate `extract_citations` graph node; citation objects are built in FastAPI from the last `search_content` `ToolMessage` plus the final assistant text.
+
+### 4. Language Fallback (inside `search_content`)
 
 ```python
-# Country A supports: ["en", "hi"]  
-# Query: country="A", language="es" (not supported)
+# Country A supports: ["en", "hi"]
+# Query: country="A", language="es" → search_languages may include preferred first,
+# then remaining supported languages until results are found.
 
-for fallback_lang in ["en", "hi"]:
-    chunks = retrieve(query, country="A", language=fallback_lang)
-    if chunks:
-        return synthesize_with_translation(chunks, target_lang="es")
-        
-return no_answer_response()
+for search_lang in search_languages:
+    results = retrieve(query, country=country, language=search_lang, top_k=top_k)
+    if results:
+        return formatted_context(...)
+return "No relevant content found..."
 ```
+
+The LLM is instructed to answer in the user’s **preferred language** when possible, even if chunks were retrieved from another supported language for that country.
 
 ## Data Flow Example
 
@@ -124,25 +106,27 @@ return no_answer_response()
 ```
 
 **Processing:**
-1. **Validate**: Country B, language es → valid
-2. **Embed**: Question → [0.1, -0.3, 0.7, ...] (384-dim vector)
-3. **Retrieve**: Query Qdrant with filters `country=B AND language=es` 
-4. **Results**: `b_faq_returns_es`, `b_tc_es_v3` (Spanish content only)
-5. **Synthesize**: LLM generates Spanish answer with `[1]`, `[2]` citations
-6. **Extract**: Parse citations, compute match scores
-7. **Response**: Structured JSON with answer + citations
+1. **Validate**: `AskRequest` — country B, language `es` → valid (422 if invalid country).
+2. **Embed**: Question → embedding vector (384-dim).
+3. **Agent**: Model calls `search_content` → Qdrant with `country=B` and language loop starting from `es`.
+4. **Results**: Spanish chunks (e.g. `b_faq_returns_es`) with similarity scores.
+5. **Synthesize**: Model answers with optional `[1]`, `[2]` citations.
+6. **Response build**: API parses tool output → `Citation` list + `Trace.retrieval_count`.
 
-**Output:**
+**Output (shape):**
 ```json
 {
   "answer": "Puede devolver cualquier artículo dentro de los 7 días [1]...",
   "citations": [{
     "content_id": "b_faq_returns_es",
+    "type": "FAQ",
     "excerpt": "Puede devolver cualquier artículo dentro de los 7 días...",
     "match_score": 0.91
   }]
 }
 ```
+
+(`language_used` and `trace` fields follow `src/schema/models.py`.)
 
 ## Key Design Decisions
 
@@ -151,20 +135,20 @@ return no_answer_response()
 - **Rationale**: Guarantees isolation, no risk of cross-country leakage
 - **Alternative**: Retrieve top-K globally, then filter → risky
 
-### 2. LangGraph vs Linear Pipeline  
-- **Chosen**: LangGraph with explicit state machine
-- **Rationale**: Interview requirement, easier fallback logic, testable
-- **Alternative**: Simple function chain → less flexible
+### 2. Tool Agent vs Large Explicit DAG  
+- **Chosen**: Small LangGraph with `bind_tools` + `ToolNode`
+- **Rationale**: Matches modern agent patterns; retrieval policy is centralized in `search_content`
+- **Alternative**: Many hand-written nodes (validate → retrieve → …) → more boilerplate for this scope
 
 ### 3. Local vs API Embeddings
 - **Chosen**: Local sentence-transformers
 - **Rationale**: No rate limits, faster iteration, cost predictable
 - **Alternative**: OpenAI/Cohere embeddings → better multilingual quality
 
-### 4. Citation Verification Method
-- **Chosen**: String similarity with SequenceMatcher  
-- **Rationale**: Simple, reliable, interpretable scores
-- **Alternative**: Semantic similarity with embeddings → more sophisticated
+### 4. Citation Scores
+- **Chosen**: Qdrant similarity scores exposed in tool output and passed through to `Citation.match_score`
+- **Rationale**: Single source of truth for “how well did this chunk match the query vector”
+- **Alternative**: Post-hoc string similarity between answer and body → extra cost and drift from retrieval
 
 ## Scalability Considerations
 

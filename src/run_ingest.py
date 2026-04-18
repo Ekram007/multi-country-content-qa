@@ -1,8 +1,4 @@
-"""Run corpus ingestion into Qdrant vector database.
-
-This script handles the data ingestion pipeline.
-Agent-Service-Toolkit style runner.
-"""
+"""Run corpus ingestion into Qdrant (CLI entry point)."""
 
 import logging
 import sys

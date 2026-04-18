@@ -1,7 +1,7 @@
 """
 Content search tools for multi-country Q&A agent.
 
-Simple @tool decorated functions following Agent-Service-Toolkit pattern.
+Simple @tool decorated functions for LangChain tool calling.
 """
 
 import logging

@@ -1,8 +1,4 @@
-"""Run the Multi-Country Content Q&A service.
-
-This is the main entry point for running the FastAPI service.
-Agent-Service-Toolkit style runner.
-"""
+"""Run the Multi-Country Content Q&A FastAPI service (CLI entry point)."""
 
 import asyncio
 import logging

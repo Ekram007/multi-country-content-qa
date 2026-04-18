@@ -5,11 +5,11 @@
 A complete multi-country content Q&A system that meets all core requirements:
 
 ### ✅ Core Functionality
-- **End-to-end pipeline**: Corpus ingestion → vector storage → retrieval → LLM synthesis → citation extraction
+- **End-to-end pipeline**: Corpus ingestion → vector storage → tool-based retrieval → LLM synthesis → structured citations in the API response
 - **Multi-tenant isolation**: Zero cross-country data leakage (verified by evaluation tests)
-- **LangGraph agent**: 6-node state machine with conditional routing and fallback logic
-- **FastAPI endpoint**: `/ask` endpoint matching exact specification from interview brief
-- **Citation fidelity**: Generated excerpts are verified against source content with match scores
+- **LangGraph agent**: Tool-calling graph (`model` ↔ `ToolNode`) with `search_content` / `get_supported_countries`; the LLM decides when to retrieve
+- **FastAPI endpoint**: `/ask` endpoint matching the interview brief
+- **Citation fidelity**: Citations are derived from the last `search_content` tool payload; excerpts are taken from retrieved bodies and **match scores** reflect Qdrant similarity scores returned at retrieval time
 
 ### ✅ Technical Implementation
 - **44 content items** across 4 countries and 4 languages successfully ingested
@@ -19,9 +19,9 @@ A complete multi-country content Q&A system that meets all core requirements:
 - **Docker containerization** with docker-compose orchestration
 
 ### ✅ Quality Assurance  
-- **9 unit tests** covering metadata filtering, citation extraction, and input validation (all passing)
-- **10-question evaluation harness** testing multi-tenant isolation, language fallback, and citation accuracy
-- **Language fallback system**: Spanish queries on Country A fall back to English content with translation
+- **Unit tests** covering metadata filtering, request validation (Pydantic), and API citation parsing from tool output
+- **10-question evaluation harness** testing multi-tenant isolation, language fallback (via `search_content` language loop), and citation alignment
+- **Language fallback**: Implemented inside `search_content` by trying supported languages for the country until chunks are returned; the model answers in the requested language when possible
 
 ## What I Chose to Skip and Why
 
@@ -33,22 +33,19 @@ A complete multi-country content Q&A system that meets all core requirements:
 
 ## What I'm Most Proud Of
 
-1. **Multi-tenant correctness**: The metadata filtering architecture ensures perfect isolation. Country A return policy queries never see Country B's 7-day window, even when semantically similar.
+1. **Multi-tenant correctness**: Metadata filtering in `retrieve()` ensures isolation. Country A return policy queries never see Country B's 7-day window, even when semantically similar.
 
-2. **LangGraph design**: Clean separation of concerns with explicit state transitions:
-   ```
-   validate → retrieve → [fallback if needed] → synthesize → extract_citations
-   ```
+2. **LangGraph + tools**: A small graph (`model` → `tools` → `model` …) keeps retrieval explicit and testable without a large custom state machine.
 
-3. **Citation verification**: The system doesn't just generate citations as decoration—it extracts relevant excerpts and computes match scores for verification.
+3. **Traceable citations**: The API parses the formatted `search_content` output so citations align with what was actually retrieved, including similarity scores from the vector store.
 
-4. **Production thinking**: Error handling for rate limits, Docker setup, comprehensive evaluation, and clear documentation.
+4. **Production thinking**: Error handling for rate limits, Docker setup, evaluation harness, and clear documentation.
 
 ## What I Would Do Differently Given More Time
 
 ### Immediate Improvements (1 day)
 - **Hybrid retrieval**: Combine semantic search with keyword matching for better recall
-- **Better citation extraction**: Use semantic similarity instead of string matching for excerpt verification  
+- **Richer excerpt selection**: Optional semantic ranking of sentences within a chunk (beyond truncation)
 - **Request batching**: Queue requests to handle LLM rate limits gracefully
 - **Health monitoring**: Add /metrics endpoint for retrieval performance and LLM latency
 
@@ -100,10 +97,10 @@ curl -X POST localhost:8000/ask -d '{"question":"return policy","country":"B","l
 - **Pro**: Easy local deployment, good Python client
 - **Con**: Requires separate service (vs. embedded FAISS)
 
-### LangGraph vs Simple Pipeline
-- **Pro**: Explicit state machine makes fallback logic testable and debuggable
-- **Pro**: Easy to add new nodes (e.g., query classification, confidence scoring)  
-- **Con**: More complexity than linear pipeline for simple use case
+### LangGraph Tool Agent vs Hand-Written DAG
+- **Pro**: Standard `bind_tools` + `ToolNode` pattern; easy to extend with more tools
+- **Pro**: Retrieval and fallback live in `search_content`, so the graph stays small
+- **Con**: Behavior depends on LLM tool-calling quality (mitigated via system prompt)
 
 ### Local Embeddings vs API
 - **Pro**: No external dependency, faster iteration during development
@@ -113,10 +110,10 @@ curl -X POST localhost:8000/ask -d '{"question":"return policy","country":"B","l
 ## Evaluation Results Summary
 
 - **Multi-tenant isolation**: ✅ Perfect (0 cross-country leakage detected)
-- **Language support**: ✅ English, Spanish, Hindi, French all working
-- **Citation accuracy**: ✅ Generated excerpts match source content with high fidelity
-- **Fallback behavior**: ✅ Spanish queries on Country A fallback to English content + translation
-- **Error handling**: ✅ Invalid countries rejected with 422 status
+- **Language support**: ✅ English, Spanish, Hindi, French (Canadian) all represented in corpus and retrieval paths
+- **Citation alignment**: ✅ Citations map to parsed retrieval blocks; scores from Qdrant
+- **Fallback behavior**: ✅ `search_content` walks supported languages per country when the first choice returns nothing
+- **Error handling**: ✅ Invalid countries rejected with **422** (Pydantic / FastAPI validation on `AskRequest`)
 - **Rate limit resilience**: ✅ Graceful degradation when LLM quota exceeded
 
 The system successfully demonstrates all core requirements from the interview brief.

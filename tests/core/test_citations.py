@@ -1,36 +1,46 @@
-"""Tests for citation extraction and matching functionality."""
+"""Tests for citation parsing and assembly from search_content tool output."""
+
 import pytest
-from src.agents.content_qa.tools import _extract_relevant_excerpt, _compute_match_score
+
+from src.schema.models import Citation
+from src.service.api import build_citations_from_retrieval, parse_retrieved_documents_from_search_content_output
 
 
-class TestCitationExtraction:
-    """Test citation extraction and matching logic."""
-    
-    def test_excerpt_extraction_finds_relevant_sentence(self):
-        """Test that relevant excerpts are correctly extracted."""
-        body = (
-            "Returns are accepted within 48 hours. "
-            "Perishable goods cannot be returned. "
-            "Contact support with your order number."
-        )
-        answer = "You can return items within 48 hours [1]."
-        excerpt = _extract_relevant_excerpt(answer, body, "[1]")
-        assert "48 hours" in excerpt
+def _sample_tool_output() -> str:
+    """Minimal formatted block matching tools.search_content output."""
+    return (
+        "Content found in es for country B:\n"
+        "Search query: returns\n"
+        "\n"
+        "[1] FAQ - Returns\n"
+        "Content ID: b_faq_returns_es\n"
+        "Language: es\n"
+        "Score: 0.9123\n"
+        "Content: Puede devolver cualquier artículo dentro de los 7 días hábiles.\n"
+    )
 
-    def test_match_score_identical(self):
-        """Test match score for identical text."""
-        text = "Returns are accepted within 48 hours."
-        score = _compute_match_score(text, text)
-        assert score == 1.0
 
-    def test_match_score_empty(self):
-        """Test match score handling for empty strings."""
-        assert _compute_match_score("", "some text") == 0.0
-        assert _compute_match_score("text", "") == 0.0
+class TestCitationParsing:
+    """Parse tool output into indexed documents."""
 
-    def test_match_score_partial(self):
-        """Test match score for partial text overlap."""
-        excerpt = "returns within 48 hours"
-        body = "Returns are accepted within 48 hours of delivery for defective items."
-        score = _compute_match_score(excerpt, body)
-        assert 0.0 < score < 1.0
+    def test_parse_retrieved_documents_extracts_score_and_content_id(self):
+        docs = parse_retrieved_documents_from_search_content_output(_sample_tool_output())
+        assert 1 in docs
+        assert docs[1]["content_id"] == "b_faq_returns_es"
+        assert docs[1]["type"] == "FAQ"
+        assert pytest.approx(docs[1]["match_score"], rel=1e-4) == 0.9123
+        assert "7 días" in docs[1]["excerpt"]
+
+    def test_build_citations_aligns_with_citation_marker(self):
+        docs = parse_retrieved_documents_from_search_content_output(_sample_tool_output())
+        answer = "Política: ver [1]."
+        citations, count = build_citations_from_retrieval(docs, answer)
+        assert count == 1
+        assert len(citations) == 1
+        assert isinstance(citations[0], Citation)
+        assert citations[0].content_id == "b_faq_returns_es"
+
+    def test_build_citations_empty_when_no_docs(self):
+        citations, count = build_citations_from_retrieval({}, "No sources [1].")
+        assert count == 0
+        assert citations == []

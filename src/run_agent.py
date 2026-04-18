@@ -1,8 +1,4 @@
-"""Interactive CLI for the Multi-Country Content Q&A Agent.
-
-This script provides a command-line interface to interact with the agent directly.
-Agent-Service-Toolkit style runner.
-"""
+"""Interactive CLI for the Multi-Country Content Q&A agent (direct agent access)."""
 
 import json
 import logging

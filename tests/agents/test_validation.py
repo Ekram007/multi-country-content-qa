@@ -1,21 +1,21 @@
-"""Tests for agent input validation."""
+"""Tests for API request validation (country / language)."""
+
 import pytest
-from src.agents.content_qa.tools import validate_input
+from pydantic import ValidationError
+
+from src.schema.models import AskRequest
 
 
 class TestInputValidation:
-    """Test agent input validation logic."""
-    
+    """AskRequest must reject invalid countries before the agent runs."""
+
     def test_valid_country(self):
-        """Test validation with valid country and language."""
-        state = {"question": "test", "country": "A", "language": "en"}
-        result = validate_input(state)
-        assert result["route"] == "retrieve"
-        assert result["error"] is None
+        """Valid country and language parse and normalize."""
+        r = AskRequest(question="test", country="A", language="EN")
+        assert r.country == "A"
+        assert r.language == "en"
 
     def test_invalid_country(self):
-        """Test validation with invalid country."""
-        state = {"question": "test", "country": "X", "language": "en"}
-        result = validate_input(state)
-        assert result["route"] == "error"
-        assert "Invalid country" in result["error"]
+        """Invalid country is rejected by Pydantic (HTTP 422 at API layer)."""
+        with pytest.raises(ValidationError):
+            AskRequest(question="test", country="X", language="en")

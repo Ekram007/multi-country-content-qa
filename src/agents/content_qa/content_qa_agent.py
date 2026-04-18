@@ -1,5 +1,5 @@
 """
-Content Q&A Agent - Agent-Service-Toolkit Style.
+Content Q&A Agent.
 
 Simple 2-node agent (model + tools) that lets the LLM decide when to call tools.
 """
@@ -33,7 +33,7 @@ class ContentQAState(MessagesState, total=False):
 
 
 def load_system_prompt() -> str:
-    """Load system prompt from text file - Agent-Service-Toolkit style."""
+    """Load system prompt from text file."""
     current_date = datetime.now().strftime("%B %d, %Y")
     
     # Load prompt from file
