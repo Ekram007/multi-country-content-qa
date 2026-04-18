@@ -79,12 +79,12 @@ curl -X POST http://localhost:8000/ask \
 ```json
 {
   "answer": "You may return any item within 7 days of delivery for a full refund [1]. ...",
-  "language_used": "es",
+  "language_used": "en",
   "citations": [
     {
-      "content_id": "b_faq_returns_es",
+      "content_id": "b_faq_returns_en",
       "type": "FAQ",
-      "excerpt": "Puede devolver cualquier artículo dentro de los 7 días...",
+      "excerpt": "You may return any item within 7 days of delivery for a full refund...",
       "match_score": 0.87
     }
   ],
@@ -96,7 +96,7 @@ curl -X POST http://localhost:8000/ask \
 }
 ```
 
-Values vary by run (`retrieval_count` follows retrieved chunks, typically `top_k=5`; `match_score` comes from Qdrant similarity).
+Values vary by run (`retrieval_count` follows retrieved chunks, typically `top_k=5`). `match_score` blends Qdrant similarity with answer–source overlap when building citations (see `ARCHITECTURE.md`).
 
 ## Multi-Tenant Isolation
 

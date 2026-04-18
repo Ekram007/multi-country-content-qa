@@ -31,6 +31,8 @@ graph TD
     style D fill:#e8f5e8
 ```
 
+
+
 ## Component Details
 
 ### 1. LangGraph Agent (`content_qa_agent`)
@@ -48,6 +50,7 @@ graph TD
 ### 2. Multi-Tenant Data Isolation
 
 **Qdrant Metadata Structure (per point):**
+
 ```json
 {
   "content_id": "b_faq_returns_es",
@@ -62,6 +65,7 @@ graph TD
 ```
 
 **Query-time Filtering:**
+
 ```python
 metadata_filter = Filter(must=[
     FieldCondition(key="country", match=MatchValue(value="B")),
@@ -81,9 +85,10 @@ There is no separate `extract_citations` graph node; citation objects are built 
 ### 4. Language Fallback (inside `search_content`)
 
 ```python
-# Country A supports: ["en", "hi"]
-# Query: country="A", language="es" → search_languages may include preferred first,
-# then remaining supported languages until results are found.
+# Example: Country B supports en + es. Typical order:
+#   - If requested language is in the map: try it first.
+#   - If requested language is not "en" and "en" is supported: try "en" next.
+# (Not every locale is tried—only this constructed list.)
 
 for search_lang in search_languages:
     results = retrieve(query, country=country, language=search_lang, top_k=top_k)
@@ -92,11 +97,12 @@ for search_lang in search_languages:
 return "No relevant content found..."
 ```
 
-The LLM is instructed to answer in the user’s **preferred language** when possible, even if chunks were retrieved from another supported language for that country.
+The LLM is instructed to answer in the user’s **preferred language** when possible, even if chunks were retrieved from another language in that list .
 
 ## Data Flow Example
 
 **Input:**
+
 ```json
 {
   "question": "¿Cuál es su política de devoluciones?",
@@ -106,6 +112,7 @@ The LLM is instructed to answer in the user’s **preferred language** when poss
 ```
 
 **Processing:**
+
 1. **Validate**: `AskRequest` — country B, language `es` → valid (422 if invalid country).
 2. **Embed**: Question → embedding vector (384-dim).
 3. **Agent**: Model calls `search_content` → Qdrant with `country=B` and language loop starting from `es`.
@@ -114,9 +121,11 @@ The LLM is instructed to answer in the user’s **preferred language** when poss
 6. **Response build**: API parses tool output → `Citation` list + `Trace.retrieval_count`.
 
 **Output (shape):**
+
 ```json
 {
   "answer": "Puede devolver cualquier artículo dentro de los 7 días [1]...",
+  "language_used": "es",
   "citations": [{
     "content_id": "b_faq_returns_es",
     "type": "FAQ",
@@ -126,41 +135,48 @@ The LLM is instructed to answer in the user’s **preferred language** when poss
 }
 ```
 
-(`language_used` and `trace` fields follow `src/schema/models.py`.)
+(`language_used` echoes the request; `trace` follows `src/schema/models.py`.)
 
 ## Key Design Decisions
 
 ### 1. Pre-filtering vs Post-filtering
+
 - **Chosen**: Pre-filtering with Qdrant metadata filters  
 - **Rationale**: Guarantees isolation, no risk of cross-country leakage
 - **Alternative**: Retrieve top-K globally, then filter → risky
 
-### 2. Tool Agent vs Large Explicit DAG  
+### 2. Tool Agent vs Large Explicit DAG
+
 - **Chosen**: Small LangGraph with `bind_tools` + `ToolNode`
 - **Rationale**: Matches modern agent patterns; retrieval policy is centralized in `search_content`
 - **Alternative**: Many hand-written nodes (validate → retrieve → …) → more boilerplate for this scope
 
 ### 3. Local vs API Embeddings
+
 - **Chosen**: Local sentence-transformers
 - **Rationale**: No rate limits, faster iteration, cost predictable
 - **Alternative**: OpenAI/Cohere embeddings → better multilingual quality
 
 ### 4. Citation Scores
-- **Chosen**: Qdrant similarity scores exposed in tool output and passed through to `Citation.match_score`
-- **Rationale**: Single source of truth for “how well did this chunk match the query vector”
-- **Alternative**: Post-hoc string similarity between answer and body → extra cost and drift from retrieval
+
+- **Chosen**: Qdrant similarity from tool output, combined in the API with **answer–body overlap** when excerpt alignment is non-trivial (`build_citations_from_retrieval`)
+- **Rationale**: Keeps retrieval signal while nudging scores when the cited span clearly aligns with the generated answer
+- **Alternative**: Pure vector score only, or pure string match only — each misses part of the story
 
 ## Scalability Considerations
 
 ### Current Limitations
+
 - **Single-node Qdrant**: No horizontal scaling
 - **Synchronous LLM calls**: No request batching  
 - **In-memory embeddings**: Model loaded per process
 - **No caching**: Every query hits vector DB + LLM
 
 ### Production Scaling
+
 - **Qdrant cluster**: Distributed vector search
 - **LLM async batching**: Process multiple requests together
 - **Redis caching**: Cache frequent queries and embeddings
 - **Load balancing**: Multiple API instances behind ALB
 - **Connection pooling**: Reuse DB connections
+
