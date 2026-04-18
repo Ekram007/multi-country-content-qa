@@ -1,8 +1,8 @@
 """Run corpus ingestion into Qdrant (CLI entry point)."""
 
 import logging
+import os
 import sys
-from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -21,18 +21,25 @@ def main():
         level=getattr(logging, settings.log_level.upper()),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
-    
+
+    recreate = os.environ.get("INGEST_RECREATE", "true").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
     print("📁 Multi-Country Content Q&A - Corpus Ingestion")
     print(f"📊 Log Level: {settings.log_level}")
     print(f"🗃️  Corpus Path: {settings.corpus_path}")
     print(f"🔍 Embedding Model: {settings.embedding_model}")
     print(f"🏠 Qdrant Host: {settings.qdrant_host}:{settings.qdrant_port}")
     print(f"📚 Collection: {settings.qdrant_collection}")
+    print(f"🔄 INGEST_RECREATE: {recreate}")
     print("=" * 50)
-    
+
     try:
-        # Run corpus ingestion
-        results = ingest_corpus()
+        # Run corpus ingestion (INGEST_RECREATE=false skips drop; upserts still run)
+        results = ingest_corpus(recreate=recreate)
         
         if results["success"]:
             print(f"\n✅ Ingestion completed successfully!")

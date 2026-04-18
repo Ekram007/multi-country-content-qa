@@ -52,11 +52,12 @@ class EmbeddingModel:
         Returns:
             numpy array of embeddings
         """
+        show_progress_bar = kwargs.pop("show_progress_bar", False)
         return self.model.encode(
-            texts, 
+            texts,
             normalize_embeddings=normalize_embeddings,
-            show_progress_bar=False,  # Disable by default for cleaner logs
-            **kwargs
+            show_progress_bar=show_progress_bar,
+            **kwargs,
         )
     
     def get_embedding_dimension(self) -> int:

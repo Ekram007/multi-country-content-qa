@@ -6,11 +6,12 @@ A natural language Q&A system that retrieves country-scoped content and provides
 
 This system solves the challenge of serving contextualized customer support answers across multiple countries and languages while maintaining strict data isolation. Given a natural language question, country, and language, it retrieves relevant content from that specific country's knowledge base and generates a grounded answer with citations pointing to the exact source content, ensuring no cross-country information leakage.
 
-**Built according to the technical specification in [`AI-Interview.txt`](./AI-Interview.txt).**
+**Built according to the technical specification in `[AI-Interview.txt](./AI-Interview.txt)`.**
 
 ## Quick Start
 
 ### Prerequisites
+
 - Python 3.10+
 - Qdrant running on localhost:6333 (or Docker)
 - LLM API key (Google Gemini, OpenAI, or OpenRouter)
@@ -31,55 +32,49 @@ docker run -d -p 6333:6333 qdrant/qdrant
 ./setup.sh
 ```
 
+### Docker Setup
+
+```bash
+# Start everything with Docker Compose
+cp .env.example .env
+
+docker compose up -d
+```
+
+The `app` container runs **corpus ingestion** (`src.run_ingest`) once on startup, then starts the API, so Qdrant is filled automatically. Optional environment variables (set in `docker-compose.yml` or override as needed):
+
+- `RUN_INGEST_ON_START` — set to `false` to skip ingestion and only run the API.
+- `INGEST_RECREATE` — set to `true` to drop and recreate the Qdrant collection on each start; `false` (default in Compose) only upserts, which is faster on restarts.
+
 ### Individual Commands
 
 ```bash
 # Install dependencies
 uv sync
 
-# Run corpus ingestion
+# Run corpus ingestion (not needed before first Docker run if you use Compose; still used for local dev)
 uv run python -m src.run_ingest
 
 # Run API service  
 uv run python -m src.run_service
 
-# Interactive agent CLI
-uv run python -m src.run_agent
-
-# Direct agent query (CLI)
-uv run python -m src.run_agent ask "What is your return policy?" A en
-
-# Health check (CLI)
-uv run python -m src.run_agent health
-```
-
-### Docker Setup (Alternative)
-
-```bash
-# Start everything with Docker Compose
-docker-compose up -d
-
-# Or build individual containers
-docker build -f docker/Dockerfile.app -t content-qa:app .
-docker build -f docker/Dockerfile.service -t content-qa:service .
 ```
 
 ## Example Usage
 
 ### Basic Request
+
 ```bash
 curl -X POST http://localhost:8000/ask \
   -H "Content-Type: application/json" \
   -d '{
     "question": "What is your return policy?",
     "country": "B", 
-    "language": "es"
+    "language": "en"
   }'
 ```
 
 ### Expected Response
-
-Shape matches [`AI-Interview.txt`](./AI-Interview.txt) (`content_id`, `type`, `excerpt`, `match_score` — no `title` on citations; `trace` has only `retrieval_count`, `latency_ms`, `model`).
 
 ```json
 {
@@ -94,7 +89,7 @@ Shape matches [`AI-Interview.txt`](./AI-Interview.txt) (`content_id`, `type`, `e
     }
   ],
   "trace": {
-    "retrieval_count": 5,
+    "retrieval_count": 1,
     "latency_ms": 2334,
     "model": "gemini-2.5-flash"
   }
@@ -156,11 +151,8 @@ EVAL_SLEEP_SECONDS=20 uv run python scripts/evaluate.py
 ### Key Components
 
 1. **LangGraph Agent**: Tool-calling graph (`model` ↔ `tools`) — LLM invokes `search_content` (RAG) then answers; explicit nodes and edges in `src/agents/content_qa/content_qa_agent.py`.
-
 2. **Qdrant Integration**: Vector similarity search with metadata pre-filtering on country/language **before** ranking (no post-filter leak).
-
 3. **Multi-tenant Isolation**: Enforced at query time via Qdrant filters, not post-processing.
-
 4. **Citations API**: Built from retrieved chunks (parsed from tool output); `match_score` reflects retrieval similarity; excerpts are sourced from stored content bodies.
 
 ## Performance Characteristics
@@ -182,33 +174,29 @@ EVAL_SLEEP_SECONDS=20 uv run python scripts/evaluate.py
 ## What I Would Do Next With More Time
 
 1. **Production Hardening**:
-   - Add request authentication and rate limiting
-   - Implement request/response validation middleware
-   - Add comprehensive error handling and retry logic
-   - Set up proper logging, metrics, and health checks
-
+  - Add request authentication and rate limiting
+  - Implement request/response validation middleware
+  - Add comprehensive error handling and retry logic
+  - Set up proper logging, metrics, and health checks
 2. **Improved Retrieval**:
-   - Hybrid search (keyword + semantic)
-   - Query expansion and rewriting
-   - Better cross-lingual embeddings (Cohere Multilingual, OpenAI)
-   - Chunk-level metadata for finer filtering
-
+  - Hybrid search (keyword + semantic)
+  - Query expansion and rewriting
+  - Better cross-lingual embeddings (Cohere Multilingual, OpenAI)
+  - Chunk-level metadata for finer filtering
 3. **Enhanced Citations**:
-   - Semantic similarity for citation verification  
-   - Source document highlighting and deep-linking
-   - Multi-source answer synthesis with source attribution
-
+  - Semantic similarity for citation verification  
+  - Source document highlighting and deep-linking
+  - Multi-source answer synthesis with source attribution
 4. **Performance Optimization**:
-   - Vector index optimization and caching
-   - LLM response caching for common queries
-   - Async processing for batch requests
-   - Connection pooling and request queuing
-
+  - Vector index optimization and caching
+  - LLM response caching for common queries
+  - Async processing for batch requests
+  - Connection pooling and request queuing
 5. **Advanced Features**:
-   - Multi-turn conversation with context
-   - Query intent classification  
-   - Confidence scoring and uncertainty handling
-   - A/B testing framework for different retrieval strategies
+  - Multi-turn conversation with context
+  - Query intent classification  
+  - Confidence scoring and uncertainty handling
+  - A/B testing framework for different retrieval strategies
 
 ## Project Structure
 
@@ -265,3 +253,4 @@ EVAL_SLEEP_SECONDS=20 uv run python scripts/evaluate.py
 - **sentence-transformers**: Local embeddings (all-MiniLM-L6-v2)
 - **LangChain**: LLM provider integrations
 - **Pydantic**: Data validation and settings management
+
