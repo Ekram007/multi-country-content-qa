@@ -171,32 +171,35 @@ EVAL_SLEEP_SECONDS=20 uv run python scripts/evaluate.py
 - **Fixed top-K**: Default `top_k=5` retrieval (not adaptive); tune via tool/retriever if needed
 - **No Authentication**: API is open; production needs authN/authZ
 
-## What I Would Do Next With More Time
+## What I would do next with more time
 
-1. **Production Hardening**:
-  - Add request authentication and rate limiting
-  - Implement request/response validation middleware
-  - Add comprehensive error handling and retry logic
-  - Set up proper logging, metrics, and health checks
-2. **Improved Retrieval**:
-  - Hybrid search (keyword + semantic)
-  - Query expansion and rewriting
-  - Better cross-lingual embeddings (Cohere Multilingual, OpenAI)
-  - Chunk-level metadata for finer filtering
-3. **Enhanced Citations**:
-  - Semantic similarity for citation verification  
-  - Source document highlighting and deep-linking
-  - Multi-source answer synthesis with source attribution
-4. **Performance Optimization**:
-  - Vector index optimization and caching
-  - LLM response caching for common queries
-  - Async processing for batch requests
-  - Connection pooling and request queuing
-5. **Advanced Features**:
-  - Multi-turn conversation with context
-  - Query intent classification  
-  - Confidence scoring and uncertainty handling
-  - A/B testing framework for different retrieval strategies
+This is the **project backlog** for continued work. Things I’d tackle first:
+
+### Multi-tenant safety (country / language)
+
+- Remove `country` from LLM tool-call parameters where the model could pass the wrong value; inject `country` (and `language` where appropriate) from the HTTP request / graph state inside the tool so retrieval always uses the caller’s scope.
+- Apply the same pattern to **language** and fallback: filtering and same-country locale fallback should follow request + explicit policy, not model-supplied tool arguments.
+
+### Retrieval (beyond `top_k=5`)
+
+- **Dynamic k**: replace top-k with bounds and heuristics (score gaps, query type, min/max caps).
+- **Thresholds**: drop weak similarity matches; optionally fetch more candidates when all scores are low (with a safety ceiling).
+- **Reranking**: cross-encoder or lightweight reranker on the vector shortlist.
+- **Hybrid search**: combine dense vectors with lexical / **fuzzy** signals on chunk excerpts and/or titles (RRF or weighted fusion) so exact keywords and typo-tolerant matches help when embedding similarity alone is ambiguous.
+- **Embeddings**: optional upgrade to stronger cross-lingual models (e.g. Cohere Multilingual, OpenAI); query expansion or rewriting where it helps.
+
+### Ingestion, citations, quality
+
+- Revisit **chunking** (size, overlap, headings) and per-chunk metadata (`content_id`, `type`, `version`) for sharper citations.
+- **Grounding**: verify cited spans appear in retrieved bodies; trim or reject hallucinated excerpts; optional “unverified” flags in trace for debugging.
+- Expand **evaluation** with adversarial cases (wrong country/language, contradictory cross-country FAQs); track retrieval hit rate and citation fidelity over time.
+
+### Observability, performance, product
+
+- **Observability**: structured logs/traces for retrieval k, threshold cuts, rerank deltas, fusion weights, per-stage latency.
+- **Performance / cost**: cache embeddings for hot queries; batch reranking where possible; cap LLM context to the smallest sufficient retrieved set; vector index tuning.
+- **Production hardening**: authentication, rate limiting, validation middleware, retries, metrics, health checks (see interview “out of scope” for the exercise itself).
+- **Advanced (later)**: multi-turn memory, intent classification, confidence scores, A/B tests for retrieval strategies, richer citation UX (highlighting, deep links).
 
 ## Project Structure
 

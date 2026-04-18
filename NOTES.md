@@ -43,17 +43,15 @@ A complete multi-country content Q&A system that meets all core requirements:
 
 ## What I Would Do Differently Given More Time
 
-### Immediate Improvements (1 day)
-- **Hybrid retrieval**: Combine semantic search with keyword matching for better recall
-- **Richer excerpt selection**: Optional semantic ranking of sentences within a chunk (beyond truncation)
-- **Request batching**: Queue requests to handle LLM rate limits gracefully
-- **Health monitoring**: Add /metrics endpoint for retrieval performance and LLM latency
+The **full prioritized backlog** (multi-tenant injection, dynamic retrieval, hybrid search, grounding, eval, observability) lives in the README:  
+[**What I would do next with more time**](./README.md#what-i-would-do-next-with-more-time).  
 
-### Longer-term (1 week)
-- **Advanced embeddings**: Migrate to multilingual models (Cohere, OpenAI) for better cross-language performance
-- **Query optimization**: Add query expansion, intent classification, and confidence scoring
-- **Conversation memory**: Extend to multi-turn conversations with context preservation
-- **Advanced testing**: Property-based testing, load testing, and A/B testing framework
+**Headlines I’d tackle first:**
+
+1. **Country / language not from tool arguments** — inject `country` and `language` from the HTTP request (or LangGraph state) inside `search_content` (and validate against an allow-list) so the model cannot retrieve under the wrong tenant.
+2. **Retriever quality** — replace fixed `top_k=5` with dynamic k, similarity thresholds, reranking, and **hybrid** dense + lexical/fuzzy signals on excerpts/titles (e.g. RRF or weighted fusion).
+3. **Chunking, citation grounding, adversarial eval** — tighter chunks, verify cited spans against retrieved bodies, expand tests for cross-country edge cases.
+4. **Observability & hardening** — structured traces per retrieval stage; then auth/rate limits/metrics when moving beyond the interview scope.
 
 ## Technical Gotchas for Reviewers
 
